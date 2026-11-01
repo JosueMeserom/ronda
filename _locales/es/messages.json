@@ -1,0 +1,11 @@
+{
+	"extDescription": {
+		"message": "Las pestañas abiertas desde un enlace heredan todo el historial de la pestaña de la que vienen."
+	},
+	"actionTitleOn": {
+		"message": "Ronda: activada (clic para desactivar)"
+	},
+	"actionTitleOff": {
+		"message": "Ronda: desactivada (clic para activar)"
+	}
+}

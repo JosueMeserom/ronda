@@ -1,0 +1,11 @@
+{
+	"extDescription": {
+		"message": "Tabs opened from a link inherit the full back history of the tab they came from."
+	},
+	"actionTitleOn": {
+		"message": "Ronda: on (click to turn off)"
+	},
+	"actionTitleOff": {
+		"message": "Ronda: off (click to turn on)"
+	}
+}
