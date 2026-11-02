@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ronda</title>
+<meta name="description" content="Extensión para navegadores Chromium: las pestañas abiertas desde un enlace heredan todo el historial de la pestaña de la que vienen, y el botón Atrás te lleva de vuelta.">
+<meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf6f0" media="(prefers-color-scheme: light)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23c9743f' fill-rule='evenodd' d='M1 4h30v3H1zM3 7h26v22H3zM12.5 29V14a3.5 3.5 0 0 1 7 0v15zM5.5 29v-6a2.5 2.5 0 0 1 5 0v6zM21.5 29v-6a2.5 2.5 0 0 1 5 0v6z'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Ronda">
+<meta property="og:description" content="Las pestañas abiertas desde un enlace heredan todo el historial de la pestaña de la que vienen.">
+<style>
+  /* ---- Paleta: la piedra del Puente Nuevo y el fondo del Tajo -------------- */
+  :root {
+    /* El terracota del icono, para rellenos. Como texto cambia según el fondo. */
+    --terracota: #c9743f;
+    --terracota-texto: #dc8a56;
+    --sobre-terracota: #1d120b;
+    --piedra: #c9b394;
+    --tajo: #79c0ac;
+
+    --fondo: #141210;
+    --fondo2: #1b1815;
+    --panel: #221e1a;
+    --linea: #38312a;
+    --texto: #f2ece4;
+    --suave: #b9ad9f;
+    --tenue: #938779;
+    --sombra: 0 1px 2px rgba(0,0,0,.45), 0 14px 40px -14px rgba(0,0,0,.75);
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --terracota-texto: #a2522a;
+      --piedra: #8d7554;
+      --tajo: #1f7566;
+
+      --fondo: #faf6f0;
+      --fondo2: #f2ebe1;
+      --panel: #ffffff;
+      --linea: #e5dbcd;
+      --texto: #1f1a15;
+      --suave: #5a4f43;
+      --tenue: #766a5c;
+      --sombra: 0 1px 2px rgba(31,26,21,.06), 0 14px 32px -16px rgba(31,26,21,.25);
+      color-scheme: light;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--fondo);
+    color: var(--texto);
+    font: 400 17px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .envoltorio { width: min(100% - 2.5rem, 62rem); margin-inline: auto; }
+  h1, h2, h3 { line-height: 1.15; letter-spacing: -0.025em; margin: 0; font-weight: 700; }
+  p { margin: 0 0 1rem; }
+  a { color: var(--terracota-texto); text-decoration-color: color-mix(in srgb, var(--terracota-texto) 40%, transparent); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: currentColor; }
+  a:focus-visible { outline: 2px solid var(--tajo); outline-offset: 3px; border-radius: 4px; }
+  code { font: .88em ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; color: var(--texto); background: var(--fondo2); padding: .12em .4em; border-radius: 5px; white-space: nowrap; }
+
+  /* ---- Cabecera --------------------------------------------------------- */
+  header { position: relative; padding: clamp(3.5rem, 11vw, 7rem) 0 clamp(5rem, 14vw, 9rem); overflow: hidden; text-align: center; }
+  /* El puente del icono, a lo grande: asoma por debajo del texto. */
+  .puente { position: absolute; left: 50%; bottom: -1px; width: clamp(20rem, 58vw, 40rem); height: auto; transform: translateX(-50%); color: var(--terracota); opacity: .11; pointer-events: none; }
+  header > .envoltorio { position: relative; z-index: 1; }
+
+  .marca { display: flex; align-items: center; justify-content: center; gap: .75rem; margin-bottom: 2rem; }
+  .marca svg { width: 44px; height: 44px; display: block; }
+  .marca b { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.03em; }
+
+  h1 { font-size: clamp(2.3rem, 7vw, 4.1rem); max-width: 19ch; margin-inline: auto; text-wrap: balance; }
+  h1 em { font-style: normal; color: var(--terracota-texto); }
+  .entradilla { font-size: clamp(1.05rem, 2.2vw, 1.25rem); color: var(--suave); max-width: 56ch; margin: 1.4rem auto 0; text-wrap: pretty; }
+
+  .acciones { display: flex; flex-wrap: wrap; justify-content: center; gap: .75rem; margin-top: 2.1rem; }
+  .boton { padding: .8rem 1.4rem; border-radius: 12px; border: 1px solid var(--terracota); font-weight: 650; text-decoration: none; transition: filter .15s, border-color .15s; }
+  .boton.principal { background: var(--terracota); color: var(--sobre-terracota); }
+  .boton.principal:hover { filter: brightness(1.08); }
+  .boton.secundario { background: var(--panel); border-color: var(--linea); color: var(--texto); }
+  .boton.secundario:hover { border-color: var(--terracota); }
+
+  /* ---- Secciones -------------------------------------------------------- */
+  section { padding: clamp(3rem, 8vw, 5.5rem) 0; border-top: 1px solid var(--linea); scroll-margin-top: 0; }
+  section > .envoltorio > h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); text-align: center; }
+  .subtitulo { color: var(--suave); max-width: 62ch; margin: .9rem auto 0; text-align: center; text-wrap: pretty; }
+
+  /* ---- La diferencia ---------------------------------------------------- */
+  .demo { margin-top: 2.5rem; display: grid; gap: 1.5rem; }
+  @media (min-width: 48rem) { .demo { grid-template-columns: 1fr 1fr; align-items: start; } }
+  figure { margin: 0; min-width: 0; }
+  figcaption { display: flex; align-items: baseline; justify-content: center; gap: .6rem; margin-bottom: .8rem; flex-wrap: wrap; }
+  .etiqueta { font-size: .74rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; padding: .22rem .6rem; border-radius: 6px; }
+  .etiqueta.normal { color: var(--suave); background: color-mix(in srgb, var(--tenue) 18%, transparent); }
+  .etiqueta.ronda { color: var(--terracota-texto); background: color-mix(in srgb, var(--terracota) 16%, transparent); }
+  figcaption span:last-child { color: var(--suave); font-size: .92rem; }
+
+  /* Un navegador en miniatura: lo único que cambia es el botón y el historial. */
+  .navegador { border: 1px solid var(--linea); border-radius: 14px; overflow: hidden; background: var(--panel); box-shadow: var(--sombra); }
+  .barra { display: flex; align-items: center; gap: .6rem; padding: .65rem .8rem; background: var(--fondo2); border-bottom: 1px solid var(--linea); }
+  .atras { flex: none; width: 2.1rem; height: 2.1rem; padding: .4rem; border-radius: 50%; }
+  .atras.gris { color: var(--tenue); opacity: .55; }
+  .atras.activo { color: var(--sobre-terracota); background: var(--terracota); }
+  .direccion { flex: 1; min-width: 0; padding: .3rem .85rem; border-radius: 999px; background: var(--panel); border: 1px solid var(--linea); color: var(--suave); font: .88rem ui-monospace, Menlo, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .historial { padding: 1.3rem 1rem 1.1rem; }
+  .camino { display: flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.5rem; }
+  .pagina { padding: .4rem .8rem; border-radius: 8px; font-size: .92rem; font-weight: 600; border: 1px solid var(--linea); background: var(--fondo2); }
+  .pagina.actual { border-color: var(--terracota); }
+  .vuelta { color: var(--terracota-texto); font-weight: 700; }
+  .cuenta { margin: .9rem 0 0; text-align: center; font: .84rem ui-monospace, Menlo, Consolas, monospace; color: var(--suave); }
+
+  /* ---- Pasos ------------------------------------------------------------ */
+  .pasos { margin-top: 2.5rem; display: grid; gap: 1.1rem; counter-reset: paso; }
+  @media (min-width: 48rem) { .pasos { grid-template-columns: repeat(3, 1fr); } }
+  .paso { position: relative; min-width: 0; padding: 1.5rem 1.4rem 1.4rem; border-radius: 14px; background: var(--panel); border: 1px solid var(--linea); overflow: hidden; }
+  .paso::before {
+    counter-increment: paso; content: counter(paso);
+    position: absolute; top: 1.1rem; right: 1.2rem;
+    font-size: 2.6rem; font-weight: 800; line-height: 1; color: var(--linea);
+  }
+  /* Una franja de color por paso: el terracota, la piedra y el río. */
+  .paso::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; }
+  .paso:nth-child(1)::after { background: var(--terracota); }
+  .paso:nth-child(2)::after { background: var(--piedra); }
+  .paso:nth-child(3)::after { background: var(--tajo); }
+  .paso h3 { font-size: 1.06rem; margin-bottom: .5rem; padding-right: 2.2rem; }
+  .paso p { color: var(--suave); font-size: .96rem; margin: 0; }
+
+  /* ---- Limitaciones y notas --------------------------------------------- */
+  .limites { margin-top: 2.5rem; display: grid; gap: 1.1rem; }
+  @media (min-width: 48rem) { .limites { grid-template-columns: 1fr 1fr; } }
+  .limite { padding: 1.4rem 1.5rem; border-radius: 14px; background: var(--panel); border: 1px solid var(--linea); border-top: 3px solid var(--terracota); }
+  .limite h3 { font-size: 1.12rem; margin-bottom: .55rem; }
+  .limite p { color: var(--suave); font-size: .97rem; }
+  .limite p:last-child { margin-bottom: 0; }
+  .limite strong { color: var(--texto); }
+
+  .nota { margin-top: 2rem; padding: 1.4rem 1.5rem; border-radius: 14px; background: var(--fondo2); border: 1px solid var(--linea); border-left: 3px solid var(--piedra); }
+  .nota p { color: var(--suave); font-size: .97rem; }
+  .nota p:last-child { margin-bottom: 0; }
+  .nota strong { color: var(--texto); }
+
+  /* ---- Pie -------------------------------------------------------------- */
+  footer { border-top: 1px solid var(--linea); padding: 3rem 0 4rem; color: var(--suave); font-size: .92rem; }
+  footer .envoltorio { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: flex-start; justify-content: space-between; }
+  footer p { margin: 0; max-width: 54ch; }
+  .enlaces { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <svg class="puente" viewBox="0 0 32 26" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M1 1h30v3H1zM3 4h26v22H3zM12.5 26V11a3.5 3.5 0 0 1 7 0v15zM5.5 26v-6a2.5 2.5 0 0 1 5 0v6zM21.5 26v-6a2.5 2.5 0 0 1 5 0v6z"/></svg>
+  <div class="envoltorio">
+    <div class="marca">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="#c9743f" fill-rule="evenodd" d="M1 4h30v3H1zM3 7h26v22H3zM12.5 29V14a3.5 3.5 0 0 1 7 0v15zM5.5 29v-6a2.5 2.5 0 0 1 5 0v6zM21.5 29v-6a2.5 2.5 0 0 1 5 0v6z"/></svg>
+      <b>Ronda</b>
+    </div>
+
+    <h1>Abre enlaces en otra pestaña sin <em>perder el camino de vuelta</em></h1>
+    <p class="entradilla">
+      Una pestaña abierta con el clic central nace con el historial vacío y el botón Atrás en
+      gris. Ronda, una extensión para navegadores Chromium, le da todo el historial de la
+      pestaña de la que viene, y Atrás te devuelve a la página de origen.
+    </p>
+
+    <div class="acciones">
+      <a class="boton principal" href="#uso">Cómo instalarla</a>
+      <a class="boton secundario" href="https://github.com/JosueMeserom/ronda">Ver en GitHub</a>
+    </div>
+  </div>
+</header>
+
+<section id="diferencia">
+  <div class="envoltorio">
+    <h2>La diferencia</h2>
+    <p class="subtitulo">
+      La misma pestaña, abierta con el clic central, con Ctrl+clic o desde un
+      <code>target="_blank"</code>. Lo que cambia es lo que hay detrás del botón Atrás.
+    </p>
+
+    <div class="demo">
+      <figure>
+        <figcaption>
+          <span class="etiqueta normal">Pestaña normal</span>
+          <span>No hay camino de vuelta</span>
+        </figcaption>
+        <div class="navegador" role="img" aria-label="Pestaña normal: el botón Atrás está en gris y el historial solo contiene la página nueva.">
+          <div class="barra">
+            <svg class="atras gris" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>
+            <span class="direccion">la.nueva</span>
+          </div>
+          <div class="historial">
+            <div class="camino"><span class="pagina actual">la.nueva</span></div>
+            <p class="cuenta">historial: 1</p>
+          </div>
+        </div>
+      </figure>
+
+      <figure>
+        <figcaption>
+          <span class="etiqueta ronda">Ronda</span>
+          <span>Atrás lleva al origen</span>
+        </figcaption>
+        <div class="navegador" role="img" aria-label="Con Ronda: el botón Atrás está activo y el historial contiene la página de origen y la nueva.">
+          <div class="barra">
+            <svg class="atras activo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>
+            <span class="direccion">la.nueva</span>
+          </div>
+          <div class="historial">
+            <div class="camino"><span class="pagina">origen</span><span class="vuelta" aria-hidden="true">←</span><span class="pagina actual">la.nueva</span></div>
+            <p class="cuenta">historial: origen + 1</p>
+          </div>
+        </div>
+      </figure>
+    </div>
+
+    <div class="nota">
+      <p>
+        <strong>Cómo lo consigue.</strong> Chromium no deja a las extensiones escribir el
+        historial de una pestaña. Lo único que crea una pestaña con historial es duplicar otra,
+        así que Ronda duplica la de origen, manda la copia a la dirección del enlace y la pone
+        en el sitio de la pestaña nueva. De ahí vienen sus limitaciones, que están más abajo.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="uso">
+  <div class="envoltorio">
+    <h2>Cómo se usa</h2>
+    <p class="subtitulo">Ronda aún no está en ninguna tienda, así que se instala descomprimida.</p>
+
+    <div class="pasos">
+      <div class="paso">
+        <h3>Descarga el repositorio</h3>
+        <p>Descarga o clona <a href="https://github.com/JosueMeserom/ronda">JosueMeserom/ronda</a> desde GitHub.</p>
+      </div>
+      <div class="paso">
+        <h3>Activa el modo de desarrollador</h3>
+        <p>Abre <code>chrome://extensions</code> (<code>brave://extensions</code>, <code>edge://extensions</code>…) y activa el modo de desarrollador.</p>
+      </div>
+      <div class="paso">
+        <h3>Carga la carpeta</h3>
+        <p>Pulsa <strong>Cargar descomprimida</strong> y elige la carpeta del repositorio.</p>
+      </div>
+    </div>
+
+    <div class="nota">
+      <p>
+        <strong>Y ya está: abre enlaces como siempre.</strong> Su icono la activa y la desactiva;
+        desactivada, muestra <code>OFF</code>.
+      </p>
+      <p>
+        <strong>Probada en Brave y Edge</strong> (Chromium 156). Debería funcionar en cualquier
+        Chromium a partir del 110, pero en el resto no se ha probado.
+      </p>
+      <p>
+        <strong>El aviso de permisos.</strong> Chromium avisa de que puede «leer tu historial de
+        navegación» por el permiso <code>tabs</code>, pero Ronda no lo guarda ni lo envía: no se
+        conecta a nada y solo guarda si está activada o no.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="limitaciones">
+  <div class="envoltorio">
+    <h2>Antes de instalarla</h2>
+    <p class="subtitulo">
+      Son consecuencia de hacerlo desde una extensión, y solo se quitarían desde dentro del navegador.
+    </p>
+
+    <div class="limites">
+      <div class="limite">
+        <h3>Hay un parpadeo</h3>
+        <p>
+          Duplicar pone siempre la copia delante, sin opción para evitarlo. Ronda devuelve el foco
+          enseguida, pero se ve un destello, sobre todo con muchas pestañas abiertas.
+        </p>
+      </div>
+      <div class="limite">
+        <h3>Los enlaces de un solo uso pueden fallar</h3>
+        <p>
+          Cada enlace se pide dos veces, una en la pestaña nueva y otra en la copia. Un enlace para
+          confirmar un correo o entrar sin contraseña puede gastarse en la primera y dar error en
+          la segunda.
+        </p>
+        <p><strong>Para esos, desactívala un momento o ábrelos en la misma pestaña.</strong></p>
+      </div>
+    </div>
+
+    <div class="nota">
+      <p>
+        Hay más detalles en el <a href="https://github.com/JosueMeserom/ronda#readme">README</a>:
+        las demás limitaciones, como la pérdida de <code>window.opener</code>, y los casos que Ronda
+        no toca, como las descargas, los formularios y las ventanas emergentes.
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="envoltorio">
+    <p>
+      El nombre viene del <a href="https://es.wikipedia.org/wiki/Puente_Nuevo_(Ronda)">Puente Nuevo</a>
+      de Ronda, sobre el Tajo. Es hermana de <a href="https://github.com/JosueMeserom/bayeux">Bayeux</a>
+      y <a href="https://github.com/JosueMeserom/segovia">Segovia</a>. Se ofrece tal cual, sin garantías,
+      y no está afiliada a Google, Brave, Microsoft ni Yandex.
+    </p>
+    <div class="enlaces">
+      <a href="https://github.com/JosueMeserom/ronda">Código</a>
+      <a href="https://github.com/JosueMeserom/ronda/blob/main/LICENSE">MIT</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
