@@ -220,14 +220,13 @@ async function ejecutar(cdp, base) {
 		console.log(`${ok ? 'ok   ' : 'FALLO'} ${nombre}${ok ? '' : `\n      ${detalle}`}`);
 	};
 
-	const { targetInfos } = await cdp.enviar('Target.getTargets');
-	const sw = targetInfos.find(t => t.type === 'service_worker' && t.url.endsWith('/background.js'));
+	const buscarSW = async () => (await cdp.enviar('Target.getTargets')).targetInfos.find(t => t.type === 'service_worker' && t.url.endsWith('/background.js'));
 
-	if (!sw) {
+	if (!await buscarSW()) {
 		throw new Error('La extensión no se ha cargado');
 	}
 
-	const enSW = expr => cdp.enPestana(sw.targetId, s => cdp.evaluar(expr, s));
+	const enSW = async expr => cdp.enPestana((await buscarSW()).targetId, s => cdp.evaluar(expr, s));
 
 	for (const [nombre, selector, boton, comprobar] of ESCENARIOS) {
 		const id = await preparar(cdp, base);
@@ -267,6 +266,17 @@ async function ejecutar(cdp, base) {
 	await entrar(cdp, '/hijo');
 	const sola = await estado(cdp);
 	informar(sola.length === 1 && sola[0].ruta === '/hijo' && sola[0].hist === 1, 'Con el origen cerrado se queda como pestaña normal', JSON.stringify(sola));
+
+	// Chromium para la extensión mientras esperas: la pestaña pendiente no se pierde.
+	const parada = await preparar(cdp, base);
+	await cdp.enPestana(parada, s => clic(cdp, s, '#hijo', 'middle'));
+	await dormir(800);
+	await cdp.enviar('Target.closeTarget', { targetId: (await buscarSW()).targetId });
+	await dormir(500);
+	const seHaParado = !await buscarSW();
+	await entrar(cdp, '/hijo');
+	const trasParar = await estado(cdp);
+	informar(seHaParado && heredaHistorial('/hijo')(trasParar), 'Hereda aunque la extensión se haya parado', JSON.stringify({ seHaParado, trasParar }));
 
 	// Las siguientes pestañas caen donde caerían sin Ronda.
 	const conRonda = await secuencia(cdp, base, enSW);
