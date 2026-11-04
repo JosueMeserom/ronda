@@ -165,6 +165,30 @@ async function estado(cdp) {
 }
 
 // ---- Escenarios -------------------------------------------------------------
+// Entra en la primera pestaña cuya dirección contenga `texto`.
+async function entrar(cdp, texto) {
+	const t = (await pestanas(cdp)).find(x => x.url.includes(texto));
+	if (t) await cdp.enviar('Target.activateTarget', { targetId: t.targetId });
+	await dormir(1200);
+}
+
+// Abre r1 y r2, entra en r1, vuelve al origen y abre r3. Devuelve el orden resultante.
+async function secuencia(cdp, base, enSW) {
+	const id = await preparar(cdp, base);
+	await cdp.enPestana(id, s => clic(cdp, s, '#r1', 'middle'));
+	await dormir(700);
+	await cdp.enPestana(id, s => clic(cdp, s, '#r2', 'middle'));
+	await dormir(700);
+	await entrar(cdp, 'n=1');
+	await cdp.enviar('Target.activateTarget', { targetId: id });
+	await dormir(500);
+	await cdp.enPestana(id, s => clic(cdp, s, '#r3', 'middle'));
+	await dormir(800);
+	return ordenDe(await pestanasPorPosicion(enSW));
+}
+
+const pestanasPorPosicion = async enSW => JSON.parse(await enSW('chrome.tabs.query({}).then(t=>JSON.stringify(t.sort((a,b)=>a.index-b.index).map(x=>({u:x.url,a:x.active}))))'));
+const ordenDe = tabs => tabs.map(t => /n=(\d)/.exec(t.u)?.[1] ?? 'o').join('');
 const cuenta = ruta => peticiones.filter(p => p === ruta).length;
 const nueva = lista => lista.find(t => t.ruta !== '/origen');
 
@@ -209,11 +233,13 @@ async function ejecutar(cdp, base) {
 		const id = await preparar(cdp, base);
 		await cdp.enPestana(id, s => clic(cdp, s, selector, boton));
 		await dormir(2500);
+		// El clic central abre detrás: el cambio llega al entrar en la pestaña.
+		if (boton === 'middle') await entrar(cdp, selector === '#pdf' ? 'doc.pdf' : '/hijo');
 		const lista = await estado(cdp);
 		informar(comprobar(lista), nombre, JSON.stringify({ lista, peticiones }));
 	}
 
-	// Una ráfaga sale en orden aunque las páginas respondan a destiempo, y sin quitarte la pestaña.
+	// Una ráfaga la coloca el navegador, sin quitarte la pestaña ni pedir nada dos veces.
 	for (const hueco of [0, 60, 200, 600]) {
 		const id = await preparar(cdp, base);
 		await cdp.enPestana(id, async s => {
@@ -222,15 +248,32 @@ async function ejecutar(cdp, base) {
 				await dormir(hueco);
 			}
 		});
-		await dormir(4500);
-		const tabs = JSON.parse(await enSW('chrome.tabs.query({}).then(t=>JSON.stringify(t.sort((a,b)=>a.index-b.index).map(x=>({u:x.url,a:x.active}))))'));
-		const orden = tabs.map(t => /n=(\d)/.exec(t.u)?.[1] ?? 'o').join('');
-		const hist = (await estado(cdp)).filter(t => t.ruta === '/hijo').every(t => t.hist === 5);
-		informar(orden === 'o123456' && hist && tabs.find(t => t.a)?.u.endsWith('/origen'), `Ráfaga de 6 clics cada ${hueco} ms, en orden`, JSON.stringify(tabs));
+		await dormir(1500);
+		let tabs = await pestanasPorPosicion(enSW);
+		const intacta = ordenDe(tabs) === 'o123456' && tabs.find(t => t.a)?.u.endsWith('/origen') && cuenta('/hijo') === 6 && cuenta('/origen') === 0;
+		// Al entrar en una, solo cambia esa, y se queda en su sitio y delante.
+		await entrar(cdp, 'n=3');
+		tabs = await pestanasPorPosicion(enSW);
+		const tercera = (await estado(cdp)).filter(t => t.ruta === '/hijo' && t.hist === 5).length === 1;
+		informar(intacta && tercera && ordenDe(tabs) === 'o123456' && /n=3/.test(tabs.find(t => t.a)?.u), `Ráfaga de 6 clics cada ${hueco} ms`, JSON.stringify({ tabs, peticiones }));
 	}
 
+	// Sin el origen no hay historial que heredar, pero la pestaña sigue ahí.
+	const huerfana = await preparar(cdp, base);
+	await cdp.enPestana(huerfana, s => clic(cdp, s, '#hijo', 'middle'));
+	await dormir(800);
+	await cdp.enviar('Target.closeTarget', { targetId: huerfana });
+	await dormir(300);
+	await entrar(cdp, '/hijo');
+	const sola = await estado(cdp);
+	informar(sola.length === 1 && sola[0].ruta === '/hijo' && sola[0].hist === 1, 'Con el origen cerrado se queda como pestaña normal', JSON.stringify(sola));
+
+	// Las siguientes pestañas caen donde caerían sin Ronda.
+	const conRonda = await secuencia(cdp, base, enSW);
 	// Desactivada no interviene.
 	await enSW("chrome.storage.local.set({enabled:false}).then(()=>'ok')");
+	const sinRonda = await secuencia(cdp, base, enSW);
+	informar(conRonda === sinRonda, 'Coloca las pestañas igual que el navegador', JSON.stringify({ conRonda, sinRonda }));
 	const id = await preparar(cdp, base);
 	await cdp.enPestana(id, s => clic(cdp, s, '#hijo', 'middle'));
 	await dormir(1500);

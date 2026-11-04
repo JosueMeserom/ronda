@@ -1,48 +1,26 @@
 'use strict';
 
 // How it works: Chromium won't let an extension write a tab's history, but
-// chrome.tabs.duplicate() copies it. So when a tab is opened from a link, we
-// duplicate its opener (history included), send the duplicate to the link's
-// URL, put it where the new tab belongs and close the new tab.
+// chrome.tabs.duplicate() copies it. So when you enter a tab opened from a link,
+// we duplicate its opener (history included), send the duplicate to the link's
+// URL, put it in the new tab's place and close the new tab. duplicate() always
+// brings the copy to the front, which is fine by then: that's where you're going.
+// Until then the tab is the browser's own, placed by its own rules.
 
 // Duplicates we created ourselves, so their own onCreated is ignored.
 const ownDuplicates = new Set();
-// Last tab Ronda placed for each opener, so a run of links opened from the same
-// page lines up left to right. Forgotten when the user switches tabs, as
-// Chromium does.
-const lastChild = new Map();
-// Swaps run one at a time, in the order the tabs were opened. Run side by side
-// they trip over each other's indexes and focus.
+// Everything runs one at a time, in the order it happened. Run side by side,
+// swaps trip over each other's indexes and focus.
 let queue = Promise.resolve();
-// Activations caused by our own swaps mustn't count as the user switching tabs.
-let swapping = false;
-let quietUntil = 0;
-// For the instant a copy sits in front, Chromium names it as the opener of any
-// tab opened then. Remember who it was standing in for, and when.
-const standIns = new Map();
-// New tabs waiting for their first page to commit, by tab id.
-const commitWaiters = new Map();
 
+const enqueue = task => {
+	queue = queue.then(task).catch(() => {});
+};
 const isWebUrl = url => /^(https?|file):/i.test(url || '');
 const urlOf = tab => isWebUrl(tab.pendingUrl || tab.url) ? tab.pendingUrl || tab.url : null;
-
-// Don't touch a new tab until a web page has actually committed in it. A link
-// that turns out to be a download never commits (Chromium closes the tab by
-// itself, or a download manager takes over), so it stays entirely out of our
-// way. Pages written by script after window.open() never commit either. Tabs
-// that take too long keep working as normal tabs, just without the history.
-function waitForCommit(tabId, timeout = 5000) {
-	return new Promise(resolve => {
-		const done = commit => {
-			clearTimeout(timer);
-			commitWaiters.delete(tabId);
-			resolve(commit);
-		};
-		const timer = setTimeout(() => done(null), timeout);
-
-		commitWaiters.set(tabId, done);
-	});
-}
+// Tabs waiting to be entered. In session storage because Chromium stops this
+// service worker long before you get to them.
+const pendingKey = tabId => `pending:${tabId}`;
 
 async function isEnabled() {
 	const { enabled = true } = await chrome.storage.local.get('enabled');
@@ -67,43 +45,8 @@ async function duplicate(tabId) {
 	return dup;
 }
 
-// The tab a new child of `opener` should go right after: the previous child
-// from the same run if it's still beside it, otherwise the opener itself.
-async function anchorFor(opener, newTabId) {
-	const last = lastChild.get(opener.id);
-
-	if (last === undefined || last === newTabId) {
-		return opener.id;
-	}
-
-	try {
-		const tab = await chrome.tabs.get(last);
-		return tab.windowId === opener.windowId && tab.index > opener.index ? tab.id : opener.id;
-	} catch {
-		return opener.id;
-	}
-}
-
-async function swap(tab, pendingCommit, createdAt) {
-	if (ownDuplicates.has(tab.id) || !(await isEnabled())) {
-		return;
-	}
-
-	const commit = await pendingCommit;
-
-	// A submitted form can't be replayed: the copy would load it as a plain GET
-	// and lose what was sent.
-	if (!commit || commit.transitionType === 'form_submit') {
-		return;
-	}
-
-	const target = commit.url;
-
-	const standIn = standIns.get(tab.openerTabId);
-	const openerId = standIn && createdAt >= standIn.since && createdAt <= standIn.until
-		? standIn.forId
-		: tab.openerTabId;
-
+async function swap(tab, openerId) {
+	const target = urlOf(tab);
 	let opener, win;
 
 	try {
@@ -125,13 +68,9 @@ async function swap(tab, pendingCommit, createdAt) {
 		return;
 	}
 
-	// Read focus before duplicate() steals it: a target="_blank" link opens
-	// its tab in the foreground, a middle click in the background.
-	const [previouslyActive] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-	const newTabWasActive = previouslyActive?.id === tab.id;
-	const anchorId = await anchorFor(opener, tab.id);
-	const since = Date.now();
-
+	// duplicate() makes the browser forget which tab opened which in this window,
+	// and that's what it uses to place the next link. Note them down to restore them.
+	const before = await chrome.tabs.query({ windowId: tab.windowId });
 	let dup;
 
 	try {
@@ -144,66 +83,58 @@ async function swap(tab, pendingCommit, createdAt) {
 		return;
 	}
 
-	// duplicate() always focuses the copy. Give focus back straight away, before
-	// anything else, so the jump is as short as it can be.
-	const refocus = !newTabWasActive && previouslyActive
-		? chrome.tabs.update(previouslyActive.id, { active: true }).catch(() => {})
-		: null;
-
 	// Re-read everything: indexes have shifted and the new tab's URL may have
 	// moved on through redirects. If the new tab is already gone, so is the copy.
-	let current, dupNow, anchor;
+	let current, dupNow;
 
 	try {
-		[current, dupNow, anchor] = await Promise.all([
+		[current, dupNow] = await Promise.all([
 			chrome.tabs.get(tab.id),
-			chrome.tabs.get(dup.id),
-			chrome.tabs.get(anchorId).catch(() => null)
+			chrome.tabs.get(dup.id)
 		]);
 	} catch {
-		await refocus;
 		await chrome.tabs.remove(dup.id).catch(() => {});
 		return;
 	}
 
-	// Indexes as they'll be once the copy is lifted out of its spot by move().
-	const without = index => index - (dupNow.index < index ? 1 : 0);
-	const index = anchor && anchor.windowId === current.windowId
-		? without(anchor.index) + 1
-		: without(current.index);
+	const openers = before
+		.filter(t => t.openerTabId !== undefined && t.id !== current.id)
+		.map(t => [t.id, t.openerTabId === current.id ? dup.id : t.openerTabId]);
 
 	// Fired back to back: the browser runs them in order, and not waiting
 	// between them keeps the swap down to a blink.
 	await Promise.allSettled([
-		refocus,
 		chrome.tabs.update(dup.id, { url: urlOf(current) || target }),
-		chrome.tabs.move(dup.id, { index }),
+		// Index as it'll be once the copy is lifted out of its spot.
+		chrome.tabs.move(dup.id, { index: current.index - (dupNow.index < current.index ? 1 : 0) }),
+		...[...openers, [dup.id, opener.id]].map(([id, openerTabId]) => chrome.tabs.update(id, { openerTabId })),
 		chrome.tabs.remove(current.id)
 	]);
+}
 
-	// Links clicked meanwhile insert their tabs and shift every index, which can
-	// leave the copy a slot off. Check it landed right after its anchor.
-	for (let tries = 0; anchor && anchor.windowId === current.windowId && tries < 3; tries++) {
-		let a, d;
+// A tab is swapped once a web page has committed in it and you're in it. A link
+// that turns out to be a download never commits (Chromium closes the tab by
+// itself, or a download manager takes over), so it stays entirely out of our
+// way. Pages written by script after window.open() never commit either.
+async function swapIfReady(tabId) {
+	const key = pendingKey(tabId);
+	const { [key]: pending } = await chrome.storage.session.get(key);
 
-		try {
-			[a, d] = await Promise.all([chrome.tabs.get(anchorId), chrome.tabs.get(dup.id)]);
-		} catch {
-			break;
-		}
-
-		if (a.windowId !== d.windowId || d.index === a.index + 1) {
-			break;
-		}
-
-		await chrome.tabs.move(dup.id, { index: d.index > a.index ? a.index + 1 : a.index }).catch(() => {});
+	if (!pending?.committed) {
+		return;
 	}
 
-	if (refocus) {
-		standIns.set(dup.id, { forId: previouslyActive.id, since, until: Date.now() + 100 });
+	const tab = await chrome.tabs.get(tabId);
+
+	if (!tab.active) {
+		return;
 	}
 
-	lastChild.set(opener.id, dup.id);
+	await chrome.storage.session.remove(key);
+
+	if (await isEnabled()) {
+		await swap(tab, pending.openerId);
+	}
 }
 
 chrome.action.onClicked.addListener(async () => {
@@ -215,47 +146,48 @@ chrome.action.onClicked.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => updateAction(await isEnabled()));
 chrome.runtime.onInstalled.addListener(async () => updateAction(await isEnabled()));
 
-chrome.tabs.onActivated.addListener(({ tabId }) => {
-	if (swapping || Date.now() < quietUntil || ownDuplicates.has(tabId)) {
+chrome.tabs.onActivated.addListener(({ tabId }) => enqueue(() => swapIfReady(tabId)));
+
+chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url, transitionType }) => {
+	if (frameId !== 0 || !isWebUrl(url)) {
 		return;
 	}
 
-	lastChild.clear();
-});
+	enqueue(async () => {
+		const key = pendingKey(tabId);
+		const { [key]: pending } = await chrome.storage.session.get(key);
 
-chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, url, transitionType }) => {
-	if (frameId === 0 && isWebUrl(url)) {
-		commitWaiters.get(tabId)?.({ url, transitionType });
-	}
+		if (!pending || pending.committed) {
+			return;
+		}
+
+		// A submitted form can't be replayed: the copy would load it as a plain GET
+		// and lose what was sent.
+		if (transitionType === 'form_submit') {
+			await chrome.storage.session.remove(key);
+			return;
+		}
+
+		await chrome.storage.session.set({ [key]: { ...pending, committed: true } });
+		await swapIfReady(tabId);
+	});
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {
-	commitWaiters.get(tabId)?.(null);
-	ownDuplicates.delete(tabId);
-	lastChild.delete(tabId);
-	standIns.delete(tabId);
+	enqueue(async () => {
+		ownDuplicates.delete(tabId);
+		await chrome.storage.session.remove(pendingKey(tabId));
+	});
 });
 
 chrome.tabs.onCreated.addListener(tab => {
-	if (tab.openerTabId === undefined || ownDuplicates.has(tab.id)) {
+	if (tab.openerTabId === undefined) {
 		return;
 	}
 
-	const createdAt = Date.now();
-	// Start waiting now, so a commit that lands while earlier tabs are still being
-	// swapped isn't missed.
-	const pendingCommit = waitForCommit(tab.id);
-
-	queue = queue
-		.then(async () => {
-			swapping = true;
-
-			try {
-				await swap(tab, pendingCommit, createdAt);
-			} finally {
-				swapping = false;
-				quietUntil = Date.now() + 300;
-			}
-		})
-		.catch(() => {});
+	enqueue(async () => {
+		if (!ownDuplicates.has(tab.id) && await isEnabled()) {
+			await chrome.storage.session.set({ [pendingKey(tab.id)]: { openerId: tab.openerTabId, committed: false } });
+		}
+	});
 });
