@@ -132,6 +132,7 @@
   .paso:nth-child(3)::after { background: var(--tajo); }
   .paso h3 { font-size: 1.06rem; margin-bottom: .5rem; padding-right: 2.2rem; }
   .paso p { color: var(--suave); font-size: .96rem; margin: 0; }
+  .paso p + p { margin-top: .6rem; }
 
   /* ---- Limitaciones y notas --------------------------------------------- */
   .limites { margin-top: 2.5rem; display: grid; gap: 1.1rem; }
@@ -242,8 +243,9 @@
 
     <div class="pasos">
       <div class="paso">
-        <h3>Descarga el repositorio</h3>
-        <p>Descarga o clona <a href="https://github.com/JosueMeserom/ronda">JosueMeserom/ronda</a> desde GitHub.</p>
+        <h3>Descarga Ronda</h3>
+        <p><a href="https://github.com/JosueMeserom/ronda/archive/refs/heads/main.zip">Descarga el archivo ZIP</a> y descomprímelo en una carpeta que no vayas a borrar: el navegador la seguirá usando.</p>
+        <p>Si usas Git, no hace falta el ZIP: clona <a href="https://github.com/JosueMeserom/ronda">el repositorio</a> en su lugar.</p>
       </div>
       <div class="paso">
         <h3>Activa el modo de desarrollador</h3>
@@ -251,7 +253,7 @@
       </div>
       <div class="paso">
         <h3>Carga la carpeta</h3>
-        <p>Pulsa <strong>Cargar descomprimida</strong> y elige la carpeta del repositorio.</p>
+        <p>Pulsa <strong>Cargar descomprimida</strong> y elige la carpeta donde esté el archivo <code>manifest.json</code>.</p>
       </div>
     </div>
 
