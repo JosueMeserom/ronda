@@ -49,7 +49,7 @@ Chromium no deja a las extensiones escribir el historial de una pestaña, ni tie
 2. Duplica la pestaña de origen, con todo su historial, y devuelve el foco a donde estaba.
 3. Manda la copia a la dirección del enlace, la pone en el sitio de la pestaña nueva y cierra esta.
 
-Las pestañas abiertas seguidas se procesan de una en una, en el orden en que las abriste, y quedan en fila tras la de origen.
+Las pestañas abiertas seguidas se procesan de una en una, en el orden en que las abriste, y cada una queda donde la habría puesto el navegador.
 
 **Lo que no toca:**
 
@@ -57,6 +57,8 @@ Las pestañas abiertas seguidas se procesan de una en una, en el orden en que la
 |---|---|
 | **Descargas** | Nunca llegan a cargar una página. El navegador o tu gestor de descargas (probado con Free Download Manager) las reciben como siempre |
 | **Formularios** | La copia los pediría sin los datos enviados |
+| **Pestañas nuevas** (Ctrl+T) y las direcciones que escribas en ellas | No vienen de un enlace |
+| **Pestañas abiertas desde los botones Atrás y Adelante** | Ya traen su propio historial |
 | **Ventanas emergentes** | No son pestañas normales |
 | **Pestañas que van a otra ventana** | El historial no se puede llevar a otra ventana con este método |
 | **Páginas internas del navegador** | No tienen un historial web detrás |
@@ -70,8 +72,9 @@ Las pestañas abiertas seguidas se procesan de una en una, en el orden en que la
 Son consecuencia de hacerlo desde una extensión; se quitarían solo desde dentro del navegador:
 
 - **Hay un parpadeo.** Duplicar pone siempre la copia delante, sin opción para evitarlo. Ronda devuelve el foco enseguida, pero se ve un destello, sobre todo con muchas pestañas abiertas.
-- **Cada enlace se pide dos veces**, una en la pestaña nueva y otra en la copia. Lo normal es que no se note, pero un **enlace de un solo uso** (confirmar un correo, entrar sin contraseña) puede gastarse en la primera y dar error en la segunda. Para esos, desactívala un momento o ábrelos en la misma pestaña.
+- **Cada enlace se pide dos veces**, una en la pestaña nueva y otra en la copia. Lo normal es que no se note, pero un **enlace de un solo uso** (confirmar un correo, entrar sin contraseña) puede gastarse en la primera y dar error en la segunda. Para esos, desactívala un momento o ábrelos en la misma pestaña. La segunda petición va además sin `Referer`: la web no sabe desde qué página llegas.
 - **La página de origen también se pide otra vez** al duplicarla, si no está en la caché. La copia se manda a otro sitio enseguida, así que no suele llegar a mostrarse.
+- **La pestaña nueva hereda el `sessionStorage` de la de origen**, lo que una web guarda solo para esa pestaña, porque es una copia suya. Solo cuenta cuando el enlace va a la misma web.
 - **Se pierde `window.opener`.** Una web que abre una pestaña con `window.open()` y luego habla con ella deja de poder hacerlo. Es lo más raro de ver, porque los inicios de sesión suelen usar ventanas emergentes, y esas no se tocan. Si una web falla, prueba a desactivarla.
 - **La pestaña se sustituye un instante después de abrirse**, cuando la página empieza a cargar.
 
@@ -101,7 +104,7 @@ npm test -- --edge   # en Edge
 npm run check        # sintaxis y manifiesto
 ```
 
-Los tests no tienen dependencias. Abren un navegador de verdad, sin interfaz y con un perfil temporal, contra un servidor local, y hacen clics reales. Cubren el historial heredado, las descargas, los formularios, las ráfagas de clics y la extensión desactivada. Necesitan Node 21 o superior. Por ahora buscan los navegadores en las rutas de Windows; en otros sistemas, indica la ruta con `RONDA_BROWSER` (y el cierre del navegador usa `taskkill` solo si está disponible).
+Los tests no tienen dependencias. Abren un navegador de verdad, sin interfaz y con un perfil temporal, contra un servidor local, y hacen clics reales. Cubren el historial heredado, las descargas, los formularios, las ráfagas de clics, la posición de las pestañas, las pestañas nuevas, las fijadas y la extensión desactivada. Necesitan Node 21 o superior. Por ahora buscan los navegadores en las rutas de Windows; en otros sistemas, indica la ruta con `RONDA_BROWSER` (y el cierre del navegador usa `taskkill` solo si está disponible).
 
 ---
 

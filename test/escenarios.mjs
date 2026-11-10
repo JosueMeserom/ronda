@@ -129,6 +129,17 @@ async function clic(cdp, s, selector, button) {
 	await cdp.enviar('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount: 1 }, s);
 }
 
+// Pulsa un atajo del navegador (Ctrl+T, Ctrl+2…) como lo harías tú, no por una API.
+async function atajo(cdp, targetId, tecla) {
+	const codigo = tecla.toUpperCase().charCodeAt(0);
+	const k = { modifiers: 2, windowsVirtualKeyCode: codigo, nativeVirtualKeyCode: codigo, key: tecla, code: (/\d/.test(tecla) ? 'Digit' : 'Key') + tecla.toUpperCase() };
+
+	await cdp.enPestana(targetId, async s => {
+		await cdp.enviar('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k }, s);
+		await cdp.enviar('Input.dispatchKeyEvent', { type: 'keyUp', ...k }, s);
+	});
+}
+
 // Deja una sola pestaña con historial a, b, origen.
 async function preparar(cdp, base) {
 	const { targetId } = await cdp.enviar('Target.createTarget', { url: 'about:blank' });
@@ -174,6 +185,9 @@ const heredaHistorial = ruta => lista => lista.length === 2 && nueva(lista)?.rut
 const descarga = archivo => lista => lista.length === 1 && cuenta(archivo) === 1 && cuenta('/origen') === 0;
 const formulario = lista => lista.length === 2 && nueva(lista)?.metodo === 'POST' && nueva(lista).bytes > 0 && nueva(lista).hist === 1;
 
+// Las pestañas de la ventana, de izquierda a derecha, vistas desde la extensión.
+const TABS = 'chrome.tabs.query({}).then(t=>JSON.stringify(t.sort((a,b)=>a.index-b.index).map(x=>({u:x.url,a:x.active,p:x.pinned}))))';
+
 const ESCENARIOS = [
 	['Clic central en un enlace hereda el historial', '#hijo', 'middle', heredaHistorial('/hijo')],
 	['target=_blank hereda el historial', '#blanco', 'left', heredaHistorial('/hijo')],
@@ -188,6 +202,26 @@ const ESCENARIOS = [
 	['Un formulario POST por script conserva sus datos', '#postjs', 'left', formulario],
 	['window.open() escrita por script no se toca', '#escrita', 'left', lista => lista.length === 2 && cuenta('/origen') === 0]
 ];
+
+const ordenDe = tabs => tabs.map(t => /n=(\d)/.exec(t.u)?.[1] ?? 'o').join('');
+
+// Abre r1 y r2, entra en r1 con el teclado, vuelve al origen y abre r3. Devuelve el orden resultante.
+async function recorrido(cdp, base, enSW) {
+	const id = await preparar(cdp, base);
+
+	for (const selector of ['#r1', '#r2']) {
+		await cdp.enPestana(id, s => clic(cdp, s, selector, 'middle'));
+		await dormir(1500);
+	}
+
+	await atajo(cdp, id, '2');
+	await dormir(600);
+	await atajo(cdp, (await pestanas(cdp)).find(t => t.url.includes('n=1')).targetId, '1');
+	await dormir(600);
+	await cdp.enPestana(id, s => clic(cdp, s, '#r3', 'middle'));
+	await dormir(1500);
+	return ordenDe(JSON.parse(await enSW(TABS)));
+}
 
 async function ejecutar(cdp, base) {
 	let fallos = 0;
@@ -223,19 +257,47 @@ async function ejecutar(cdp, base) {
 			}
 		});
 		await dormir(4500);
-		const tabs = JSON.parse(await enSW('chrome.tabs.query({}).then(t=>JSON.stringify(t.sort((a,b)=>a.index-b.index).map(x=>({u:x.url,a:x.active}))))'));
-		const orden = tabs.map(t => /n=(\d)/.exec(t.u)?.[1] ?? 'o').join('');
+		const tabs = JSON.parse(await enSW(TABS));
+		const orden = ordenDe(tabs);
 		const hist = (await estado(cdp)).filter(t => t.ruta === '/hijo').every(t => t.hist === 5);
 		informar(orden === 'o123456' && hist && tabs.find(t => t.a)?.u.endsWith('/origen'), `Ráfaga de 6 clics cada ${hueco} ms, en orden`, JSON.stringify(tabs));
 	}
 
+	// Una pestaña nueva (Ctrl+T) en la que se escribe una dirección no es un enlace.
+	let id = await preparar(cdp, base);
+	await atajo(cdp, id, 't');
+	await dormir(1000);
+	const nuevaPestana = (await cdp.enviar('Target.getTargets')).targetInfos.find(t => t.type === 'page' && t.targetId !== id);
+
+	if (nuevaPestana) {
+		await cdp.enPestana(nuevaPestana.targetId, s => cdp.enviar('Page.navigate', { url: base + '/a', transitionType: 'typed' }, s));
+		await dormir(2500);
+	}
+
+	let lista = await estado(cdp);
+	informar(nuevaPestana && lista.length === 2 && nueva(lista)?.ruta === '/a' && nueva(lista).hist === 2 && cuenta('/a') === 1, 'Una pestaña nueva con Ctrl+T no se toca', JSON.stringify({ abierta: !!nuevaPestana, lista, peticiones }));
+
+	// Un enlace abierto desde una pestaña fijada hereda el historial, pero no queda fijado.
+	id = await preparar(cdp, base);
+	await enSW("chrome.tabs.query({active:true}).then(([t])=>chrome.tabs.update(t.id,{pinned:true})).then(()=>'ok')");
+	await cdp.enPestana(id, s => clic(cdp, s, '#hijo', 'middle'));
+	await dormir(2500);
+	const fijadas = JSON.parse(await enSW(TABS));
+	informar(heredaHistorial('/hijo')(await estado(cdp)) && fijadas.find(t => t.u.endsWith('/hijo'))?.p === false && fijadas.find(t => t.u.endsWith('/origen'))?.p === true, 'Desde una pestaña fijada no queda fijada', JSON.stringify(fijadas));
+
+	const conRonda = await recorrido(cdp, base, enSW);
+
 	// Desactivada no interviene.
 	await enSW("chrome.storage.local.set({enabled:false}).then(()=>'ok')");
-	const id = await preparar(cdp, base);
+	id = await preparar(cdp, base);
 	await cdp.enPestana(id, s => clic(cdp, s, '#hijo', 'middle'));
 	await dormir(1500);
-	const lista = await estado(cdp);
+	lista = await estado(cdp);
 	informar(lista.length === 2 && nueva(lista)?.hist === 1 && cuenta('/hijo') === 1, 'Desactivada no interviene', JSON.stringify({ lista, peticiones }));
+
+	// Con ella o sin ella, las pestañas acaban en el mismo sitio.
+	const sinRonda = await recorrido(cdp, base, enSW);
+	informar(conRonda === sinRonda, 'Coloca las pestañas igual que el navegador', JSON.stringify({ conRonda, sinRonda }));
 	return fallos;
 }
 
